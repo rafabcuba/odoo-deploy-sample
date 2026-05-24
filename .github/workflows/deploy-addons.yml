@@ -1,0 +1,204 @@
+name: Deploy Odoo Submodules to Local Addons Folder
+
+on:
+  push:
+    branches:
+      - release
+    paths:
+      - '.gitmodules'
+      - 'addons/**'  # detecta cambios en referencias de submódulos
+  pull_request:
+    branches:
+      - release
+    types: [closed]
+  # Disparo manual desde GitHub UI
+  workflow_dispatch:
+    inputs:
+      force_full_sync:
+        description: 'Forzar sincronización completa de todos los submódulos'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: deploy-odoo-addons-${{ github.ref }}
+  cancel-in-progress: false  # no cancelar despliegues en progreso
+
+env:
+  DEPLOY_BASE_PATH: /home/rbg/odoo/deploy-test
+  ADDONS_TARGET: /home/rbg/odoo/deploy-test/addons
+  LOG_FILE: /home/rbg/odoo/deploy-test/deploy.log
+  TEMP_CLONE_DIR: /tmp/odoo-deploy-${{ github.run_id }}
+
+jobs:
+  # Job 1: Validación de submódulos (ejecutado en runner alojado)
+  validate-submodules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      submodules_list: ${{ steps.get-submodules.outputs.submodules }}
+      has_changes: ${{ steps.detect-changes.outputs.has_changes }}
+    steps:
+      - name: 📥 Checkout del repositorio principal con submódulos
+        uses: actions/checkout@v4
+        with:
+          ref: release
+          submodules: 'recursive'  # clave: trae todos los submódulos
+          fetch-depth: 1
+
+      - name: 📋 Obtener lista de submódulos
+        id: get-submodules
+        run: |
+          # Extrae rutas de .gitmodules
+          SUBMODULES=$(git config --file .gitmodules --name-only --get-regexp path | cut -d '.' -f2-)
+          echo "submodules<<EOF" >> $GITHUB_OUTPUT
+          echo "$SUBMODULES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          
+          echo "📦 Submódulos encontrados:"
+          echo "$SUBMODULES"
+
+      - name: 🔍 Validar manifests de Odoo en cada submódulo
+        id: validate-manifests
+        run: |
+          FAILED=0
+          for SUBMODULE in $(git config --file .gitmodules --name-only --get-regexp path | cut -d '.' -f2-); do
+            MANIFEST="$SUBMODULE/__manifest__.py"
+            if [ ! -f "$MANIFEST" ]; then
+              echo "❌ Error: $SUBMODULE no contiene __manifest__.py"
+              FAILED=1
+            else
+              # Validación básica: existe clave 'name'
+              if ! grep -q "'name':" "$MANIFEST"; then
+                echo "⚠️  Advertencia: $SUBMODULE no tiene 'name' en manifest"
+              fi
+              echo "✅ $SUBMODULE - manifest válido"
+            fi
+          done
+          
+          if [ $FAILED -eq 1 ]; then
+            exit 1
+          fi
+
+      - name: 🧪 Ejecutar pruebas específicas de Odoo (opcional)
+        run: |
+          # Aquí podrías ejecutar pytest para cada submódulo si tienes pruebas
+          echo "✅ Validación de submódulos completada"
+
+  # Job 2: Despliegue en carpeta local (usando self-hosted runner)
+  deploy-to-local:
+    needs: validate-submodules
+    runs-on: self-hosted  # <-- TU RUNNER EN WSL
+    timeout-minutes: 15
+    environment:
+      name: odoo-production
+      url: file://${{ env.ADDONS_TARGET }}
+    
+    steps:
+      - name: 🧹 Preparar entorno temporal
+        run: |
+          rm -rf ${{ env.TEMP_CLONE_DIR }}
+          mkdir -p ${{ env.TEMP_CLONE_DIR }}
+          mkdir -p ${{ env.ADDONS_TARGET }}
+          echo "🚀 Inicio despliegue: $(date)" >> ${{ env.LOG_FILE }}
+
+      - name: 📥 Clonar repositorio con submódulos
+        run: |
+          cd ${{ env.TEMP_CLONE_DIR }}
+          git clone --recurse-submodules \
+            --branch release \
+            --depth 1 \
+            https://github.com/${{ github.repository }}.git .
+          
+          if [ $? -ne 0 ]; then
+            echo "❌ Error clonando repositorio" >> ${{ env.LOG_FILE }}
+            exit 1
+          fi
+          echo "✅ Repositorio clonado correctamente" >> ${{ env.LOG_FILE }}
+
+      - name: 🔄 Sincronizar submódulos a carpeta addons
+        run: |
+          cd ${{ env.TEMP_CLONE_DIR }}
+          
+          # Obtener lista de submódulos desde .gitmodules
+          SUBMODULES=$(git config --file .gitmodules --name-only --get-regexp path | cut -d '.' -f2-)
+          
+          for SUBMODULE in $SUBMODULES; do
+            SOURCE_PATH="${{ env.TEMP_CLONE_DIR }}/$SUBMODULE"
+            TARGET_PATH="${{ env.ADDONS_TARGET }}/$(basename $SUBMODULE)"
+            
+            if [ ! -d "$SOURCE_PATH" ]; then
+              echo "⚠️  Advertencia: $SUBMODULE no encontrado, omitiendo"
+              continue
+            fi
+            
+            # Respaldar versión anterior
+            if [ -d "$TARGET_PATH" ]; then
+              BACKUP_PATH="$TARGET_PATH.backup.$(date +%s)"
+              mv "$TARGET_PATH" "$BACKUP_PATH"
+              echo "📦 Backup creado: $BACKUP_PATH" >> ${{ env.LOG_FILE }}
+            fi
+            
+            # Copiar nuevo código (excluyendo .git)
+            rsync -av --exclude='.git' \
+              --exclude='*.pyc' \
+              --exclude='__pycache__' \
+              "$SOURCE_PATH/" "$TARGET_PATH/"
+            
+            echo "✅ Desplegado: $(basename $SUBMODULE)" >> ${{ env.LOG_FILE }}
+          done
+
+      - name: 🧹 Limpiar backups antiguos (conservar últimos 5)
+        run: |
+          cd ${{ env.ADDONS_TARGET }}
+          for ADDON_DIR in */; do
+            ls -dt ${ADDON_DIR}.backup.* 2>/dev/null | tail -n +6 | xargs rm -rf 2>/dev/null || true
+          done
+
+      - name: 🔐 Establecer permisos correctos
+        run: |
+          # Ajusta según el usuario que ejecuta Odoo
+          sudo chown -R $USER:$USER ${{ env.ADDONS_TARGET }}
+          find ${{ env.ADDONS_TARGET }} -type d -exec chmod 755 {} \;
+          find ${{ env.ADDONS_TARGET }} -type f -name '*.py' -exec chmod 644 {} \;
+          
+      - name: 🔄 Notificar a Odoo (opcional - reinicio de servicios)
+        run: |
+          # Opción 1: Tocar __init__.py para forzar recarga
+          find ${{ env.ADDONS_TARGET }} -name '__init__.py' -exec touch {} \;
+          
+          # Opción 2: Reiniciar servicio Odoo (descomentar si aplica)
+          # sudo systemctl restart odoo
+          
+          echo "✅ Servicios de Odoo notificados" >> ${{ env.LOG_FILE }}
+
+      - name: 📊 Registrar despliegue exitoso
+        run: |
+          echo "✅ Despliegue completado: $(date)" >> ${{ env.LOG_FILE }}
+          echo "Commit: ${{ github.sha }}" >> ${{ env.LOG_FILE }}
+          echo "Submódulos desplegados:" >> ${{ env.LOG_FILE }}
+          
+          cd ${{ env.TEMP_CLONE_DIR }}
+          git config --file .gitmodules --name-only --get-regexp path | cut -d '.' -f2- | \
+            sed 's/^/  - /' >> ${{ env.LOG_FILE }}
+
+      - name: 🧹 Limpiar archivos temporales
+        run: |
+          rm -rf ${{ env.TEMP_CLONE_DIR }}
+          echo "🧹 Limpieza completada"
+
+  # Job 3: Notificación (opcional)
+  notify:
+    needs: [deploy-to-local]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: 📢 Enviar notificación a Slack/Telegram
+        run: |
+          # Integración con webhook de Slack (requiere secret)
+          STATUS="${{ needs.deploy-to-local.result }}"
+          if [ "$STATUS" == "success" ]; then
+            echo "✅ Despliegue exitoso de submódulos"
+          else
+            echo "❌ Falló despliegue - revisar logs"
+          fi
