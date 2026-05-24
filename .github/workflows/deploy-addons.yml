@@ -188,17 +188,17 @@ jobs:
           echo "🧹 Limpieza completada"
 
   # Job 3: Notificación (opcional)
-  notify:
-    needs: [deploy-to-local]
-    runs-on: ubuntu-latest
-    if: always()
-    steps:
-      - name: 📢 Enviar notificación a Slack/Telegram
-        run: |
-          # Integración con webhook de Slack (requiere secret)
-          STATUS="${{ needs.deploy-to-local.result }}"
-          if [ "$STATUS" == "success" ]; then
-            echo "✅ Despliegue exitoso de submódulos"
-          else
-            echo "❌ Falló despliegue - revisar logs"
-          fi
+  # notify:
+  #   needs: [deploy-to-local]
+  #   runs-on: ubuntu-latest
+  #   if: always()
+  #   steps:
+  #     - name: 📢 Enviar notificación a Slack/Telegram
+  #       run: |
+  #         # Integración con webhook de Slack (requiere secret)
+  #         STATUS="${{ needs.deploy-to-local.result }}"
+  #         if [ "$STATUS" == "success" ]; then
+  #           echo "✅ Despliegue exitoso de submódulos"
+  #         else
+  #           echo "❌ Falló despliegue - revisar logs"
+  #         fi
