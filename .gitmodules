@@ -1,0 +1,8 @@
+[submodule "odoo-sales-sample"]
+	path = odoo-sales-sample
+	url = git@github.com:rafabcuba/odoo-sales-sample.git
+	branch = release-19.0
+[submodule "odoo-account-sample"]
+	path = odoo-account-sample
+	url = git@github.com:rafabcuba/odoo-account-sample.git
+	branch = release-19.0
