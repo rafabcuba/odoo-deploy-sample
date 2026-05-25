@@ -3,7 +3,7 @@ name: Deploy Odoo Submodules to Local Addons Folder
 on:
   push:
     branches:
-      - release
+      - release-19.0
     paths:
       - '.gitmodules'
       - 'addons/**'  # detecta cambios en referencias de submódulos
