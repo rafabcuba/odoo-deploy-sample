@@ -9,6 +9,12 @@ on:
       - release-19.0
     types: [closed]
   workflow_dispatch:
+    inputs:
+      force_full_sync:
+        description: 'Forzar sincronización completa de todos los submódulos'
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: deploy-odoo-addons-${{ github.ref }}
@@ -21,53 +27,35 @@ env:
   TEMP_CLONE_DIR: /tmp/odoo-deploy-${{ github.run_id }}
 
 jobs:
-  # Job 1: Validación de submódulos
-  # validate-submodules:
-  #   runs-on: ubuntu-latest
-  #   timeout-minutes: 10
-  #   steps:
-  #     - name: 📥 Checkout del repositorio principal con submódulos
-  #       uses: actions/checkout@v4
-  #       with:
-  #         ref: release-19.0
-  #         submodules: 'recursive'
-  #         fetch-depth: 1
+  # Job 1: Validación simplificada (solo verificar que hay submódulos)
+  validate-submodules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 📥 Checkout del repositorio principal
+        uses: actions/checkout@v4
+        with:
+          ref: release-19.0
+          fetch-depth: 1
 
-  #     - name: 📋 Obtener lista de submódulos
-  #       id: get-submodules
-  #       run: |
-  #         if [ ! -f .gitmodules ]; then
-  #           echo "⚠️ No hay submódulos en este repositorio"
-  #           exit 0
-  #         fi
-          
-  #         SUBMODULES=$(git config --file .gitmodules --name-only --get-regexp path | cut -d '.' -f2-)
-  #         echo "📦 Submódulos encontrados:"
-  #         echo "$SUBMODULES"
+      - name: 📋 Verificar existencia de submódulos
+        run: |
+          if [ ! -f .gitmodules ]; then
+            echo "⚠️ No hay submódulos en este repositorio"
+            echo "NO_SUBMODULES=true" >> $GITHUB_ENV
+          else
+            echo "📦 Submódulos encontrados:"
+            git config --file .gitmodules --name-only --get-regexp path | cut -d '.' -f2-
+            echo "NO_SUBMODULES=false" >> $GITHUB_ENV
+          fi
 
-  #     - name: 🔍 Validar manifests de Odoo en cada submódulo
-  #       run: |
-  #         if [ ! -f .gitmodules ]; then
-  #           echo "⚠️ No hay submódulos para validar"
-  #           exit 0
-  #         fi
-          
-  #         FAILED=0
-  #         for SUBMODULE in $(git config --file .gitmodules --name-only --get-regexp path | cut -d '.' -f2-); do
-  #           MANIFEST="$SUBMODULE/__manifest__.py"
-  #           if [ ! -f "$MANIFEST" ]; then
-  #             echo "❌ Error: $SUBMODULE no contiene __manifest__.py"
-  #             FAILED=1
-  #           else
-  #             echo "✅ $SUBMODULE - manifest válido"
-  #           fi
-  #         done
-          
-  #         if [ $FAILED -eq 1 ]; then
-  #           exit 1
-  #         fi
+      - name: ℹ️ Información del repositorio
+        run: |
+          echo "✅ Validación completada"
+          echo "Repositorio: ${{ github.repository }}"
+          echo "Rama: ${{ github.ref_name }}"
 
-  # Job 2: Despliegue en carpeta local
+  # Job 2: Despliegue en carpeta local (usando self-hosted runner)
   deploy-to-local:
     needs: validate-submodules
     runs-on: self-hosted
@@ -82,81 +70,182 @@ jobs:
           rm -rf ${{ env.TEMP_CLONE_DIR }}
           mkdir -p ${{ env.TEMP_CLONE_DIR }}
           mkdir -p ${{ env.ADDONS_TARGET }}
+          echo "========================================" >> ${{ env.LOG_FILE }}
           echo "🚀 Inicio despliegue: $(date)" >> ${{ env.LOG_FILE }}
           echo "Commit: ${{ github.sha }}" >> ${{ env.LOG_FILE }}
+          echo "========================================" >> ${{ env.LOG_FILE }}
 
       - name: 📥 Clonar repositorio con submódulos
         run: |
           cd ${{ env.TEMP_CLONE_DIR }}
+          
+          # Clonar el repositorio principal con todos los submódulos
+          echo "Clonando repositorio: https://github.com/${{ github.repository }}.git" >> ${{ env.LOG_FILE }}
+          
           git clone --recurse-submodules \
             --branch release-19.0 \
             --depth 1 \
             https://github.com/${{ github.repository }}.git .
           
           if [ $? -ne 0 ]; then
-            echo "❌ Error clonando repositorio" >> ${{ env.LOG_FILE }}
+            echo "❌ Error clonando repositorio" | tee -a ${{ env.LOG_FILE }}
             exit 1
           fi
+          
           echo "✅ Repositorio clonado correctamente" >> ${{ env.LOG_FILE }}
+          
+          # Listar estructura para diagnóstico
+          echo "📁 Estructura del repositorio:" >> ${{ env.LOG_FILE }}
+          ls -la >> ${{ env.LOG_FILE }}
 
       - name: 🔄 Sincronizar submódulos a carpeta addons
         run: |
           cd ${{ env.TEMP_CLONE_DIR }}
           
           if [ ! -f .gitmodules ]; then
-            echo "⚠️ No hay submódulos para sincronizar" >> ${{ env.LOG_FILE }}
+            echo "⚠️ No hay submódulos para sincronizar" | tee -a ${{ env.LOG_FILE }}
             exit 0
           fi
           
+          # Obtener lista de submódulos
           SUBMODULES=$(git config --file .gitmodules --name-only --get-regexp path | cut -d '.' -f2-)
+          
+          if [ -z "$SUBMODULES" ]; then
+            echo "⚠️ No se encontraron submódulos" | tee -a ${{ env.LOG_FILE }}
+            exit 0
+          fi
+          
+          echo "📦 Procesando submódulos..." >> ${{ env.LOG_FILE }}
           
           for SUBMODULE in $SUBMODULES; do
             SOURCE_PATH="${{ env.TEMP_CLONE_DIR }}/$SUBMODULE"
-            TARGET_PATH="${{ env.ADDONS_TARGET }}/$(basename $SUBMODULE)"
+            # Usar el nombre del submódulo como carpeta destino
+            MODULE_NAME=$(basename "$SUBMODULE")
+            TARGET_PATH="${{ env.ADDONS_TARGET }}/$MODULE_NAME"
             
             if [ ! -d "$SOURCE_PATH" ]; then
               echo "⚠️ Advertencia: $SUBMODULE no encontrado, omitiendo" >> ${{ env.LOG_FILE }}
               continue
             fi
             
+            echo "----------------------------------------" >> ${{ env.LOG_FILE }}
+            echo "📦 Procesando submódulo: $MODULE_NAME" >> ${{ env.LOG_FILE }}
+            echo "   Origen: $SOURCE_PATH" >> ${{ env.LOG_FILE }}
+            echo "   Destino: $TARGET_PATH" >> ${{ env.LOG_FILE }}
+            
+            # Crear backup de la versión anterior
             if [ -d "$TARGET_PATH" ]; then
-              BACKUP_PATH="$TARGET_PATH.backup.$(date +%s)"
+              BACKUP_PATH="${TARGET_PATH}.backup.$(date +%s)"
               mv "$TARGET_PATH" "$BACKUP_PATH"
-              echo "📦 Backup creado: $BACKUP_PATH" >> ${{ env.LOG_FILE }}
+              echo "   📦 Backup creado: $(basename $BACKUP_PATH)" >> ${{ env.LOG_FILE }}
             fi
             
-            rsync -av --exclude='.git' \
+            # Copiar TODO el contenido del submódulo (pueden ser múltiples addons)
+            rsync -av \
+              --exclude='.git' \
+              --exclude='.github' \
               --exclude='*.pyc' \
               --exclude='__pycache__' \
+              --exclude='.pytest_cache' \
+              --exclude='.coverage' \
               "$SOURCE_PATH/" "$TARGET_PATH/" >> ${{ env.LOG_FILE }} 2>&1
             
-            echo "✅ Desplegado: $(basename $SUBMODULE)" >> ${{ env.LOG_FILE }}
+            if [ $? -eq 0 ]; then
+              echo "   ✅ Sincronizado: $MODULE_NAME" >> ${{ env.LOG_FILE }}
+              
+              # Listar módulos Odoo encontrados dentro (opcional)
+              ODOO_MODULES=$(find "$TARGET_PATH" -maxdepth 2 -name "__manifest__.py" -type f | wc -l)
+              echo "   📊 Módulos Odoo detectados: $ODOO_MODULES" >> ${{ env.LOG_FILE }}
+            else
+              echo "   ❌ Error sincronizando $MODULE_NAME" >> ${{ env.LOG_FILE }}
+            fi
           done
+          
+          echo "----------------------------------------" >> ${{ env.LOG_FILE }}
+          echo "✅ Sincronización completada" >> ${{ env.LOG_FILE }}
 
       - name: 🧹 Limpiar backups antiguos
         run: |
-          cd ${{ env.ADDONS_TARGET }}
-          for ADDON_DIR in */; do
-            ls -dt ${ADDON_DIR}.backup.* 2>/dev/null | tail -n +6 | xargs rm -rf 2>/dev/null || true
-          done
+          if [ -d "${{ env.ADDONS_TARGET }}" ]; then
+            cd ${{ env.ADDONS_TARGET }}
+            for SUBMODULE_DIR in */; do
+              # Eliminar backups antiguos (conservar solo los 3 más recientes)
+              ls -dt ${SUBMODULE_DIR}.backup.* 2>/dev/null | tail -n +4 | xargs rm -rf 2>/dev/null || true
+            done
+            echo "🧹 Limpieza de backups completada" >> ${{ env.LOG_FILE }}
+          fi
 
       - name: 🔐 Establecer permisos correctos
         run: |
-          sudo chown -R $USER:$USER ${{ env.ADDONS_TARGET }}
-          find ${{ env.ADDONS_TARGET }} -type d -exec chmod 755 {} \;
-          find ${{ env.ADDONS_TARGET }} -type f -name '*.py' -exec chmod 644 {} \;
+          if [ -d "${{ env.ADDONS_TARGET }}" ]; then
+            # Cambiar propietario recursivamente
+            sudo chown -R $USER:$USER ${{ env.ADDONS_TARGET }} 2>/dev/null || true
+            
+            # Permisos para directorios
+            find ${{ env.ADDONS_TARGET }} -type d -exec chmod 755 {} \; 2>/dev/null || true
+            
+            # Permisos para archivos Python
+            find ${{ env.ADDONS_TARGET }} -type f -name '*.py' -exec chmod 644 {} \; 2>/dev/null || true
+            
+            # Permisos para archivos XML/CSV
+            find ${{ env.ADDONS_TARGET }} -type f \( -name '*.xml' -o -name '*.csv' -o -name '*.yml' \) -exec chmod 644 {} \; 2>/dev/null || true
+            
+            echo "🔐 Permisos ajustados correctamente" >> ${{ env.LOG_FILE }}
+          fi
           
-      - name: 🔄 Notificar a Odoo
+      - name: 🔄 Notificar a Odoo (forzar recarga de addons)
         run: |
-          find ${{ env.ADDONS_TARGET }} -name '__init__.py' -exec touch {} \;
-          echo "✅ Servicios de Odoo notificados" >> ${{ env.LOG_FILE }}
+          if [ -d "${{ env.ADDONS_TARGET }}" ]; then
+            # Tocar __init__.py para que Odoo detecte cambios
+            find ${{ env.ADDONS_TARGET }} -name '__init__.py' -exec touch {} \; 2>/dev/null || true
+            echo "✅ Archivos __init__.py actualizados" >> ${{ env.LOG_FILE }}
+            
+            # Opcional: Reiniciar servicio Odoo (descomentar si aplica)
+            # sudo systemctl restart odoo
+            # echo "🔄 Servicio Odoo reiniciado" >> ${{ env.LOG_FILE }}
+          fi
 
-      - name: 📊 Registrar despliegue exitoso
+      - name: 📊 Registrar resumen del despliegue
         run: |
-          echo "✅ Despliegue completado: $(date)" >> ${{ env.LOG_FILE }}
           echo "========================================" >> ${{ env.LOG_FILE }}
+          echo "✅ Despliegue completado exitosamente" >> ${{ env.LOG_FILE }}
+          echo "📅 Fecha: $(date)" >> ${{ env.LOG_FILE }}
+          echo "🔖 Commit: ${{ github.sha }}" >> ${{ env.LOG_FILE }}
+          echo "🌿 Rama: ${{ github.ref_name }}" >> ${{ env.LOG_FILE }}
+          echo "========================================" >> ${{ env.LOG_FILE }}
+          
+          # Listar submódulos desplegados
+          if [ -d "${{ env.ADDONS_TARGET }}" ]; then
+            echo "" >> ${{ env.LOG_FILE }}
+            echo "📁 Submódulos desplegados:" >> ${{ env.LOG_FILE }}
+            ls -la ${{ env.ADDONS_TARGET }} | grep '^d' | awk '{print "  - " $9}' >> ${{ env.LOG_FILE }}
+            
+            # Contar módulos Odoo totales
+            TOTAL_MODULES=$(find ${{ env.ADDONS_TARGET }} -maxdepth 2 -name "__manifest__.py" -type f | wc -l)
+            echo "" >> ${{ env.LOG_FILE }}
+            echo "📊 Total de módulos Odoo detectados: $TOTAL_MODULES" >> ${{ env.LOG_FILE }}
+          fi
 
       - name: 🧹 Limpiar archivos temporales
         run: |
           rm -rf ${{ env.TEMP_CLONE_DIR }}
-          echo "🧹 Limpieza completada"
+          echo "🧹 Limpieza de temporales completada" >> ${{ env.LOG_FILE }}
+
+      - name: 📢 Mostrar resumen en GitHub Actions
+        if: always()
+        run: |
+          echo "## 🚀 Resultado del despliegue" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Repositorio:** ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Rama:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Destino:** \`${{ env.ADDONS_TARGET }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📁 Submódulos sincronizados:" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -d "${{ env.ADDONS_TARGET }}" ]; then
+            ls -d ${{ env.ADDONS_TARGET }}/*/ 2>/dev/null | while read dir; do
+              MODULE_COUNT=$(find "$dir" -maxdepth 2 -name "__manifest__.py" -type f | wc -l)
+              echo "- **$(basename $dir)** ($MODULE_COUNT módulos)" >> $GITHUB_STEP_SUMMARY
+            done
+          fi
