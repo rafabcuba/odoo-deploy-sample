@@ -179,16 +179,16 @@ jobs:
         run: |
           if [ -d "${{ env.ADDONS_TARGET }}" ]; then
             # Cambiar propietario recursivamente
-            sudo chown -R $USER:$USER ${{ env.ADDONS_TARGET }} 2>/dev/null || true
+            #sudo chown -R $USER:$USER ${{ env.ADDONS_TARGET }} 2>/dev/null || true
             
             # Permisos para directorios
-            find ${{ env.ADDONS_TARGET }} -type d -exec chmod 755 {} \; 2>/dev/null || true
+            #find ${{ env.ADDONS_TARGET }} -type d -exec chmod 755 {} \; 2>/dev/null || true
             
             # Permisos para archivos Python
-            find ${{ env.ADDONS_TARGET }} -type f -name '*.py' -exec chmod 644 {} \; 2>/dev/null || true
+            #find ${{ env.ADDONS_TARGET }} -type f -name '*.py' -exec chmod 644 {} \; 2>/dev/null || true
             
             # Permisos para archivos XML/CSV
-            find ${{ env.ADDONS_TARGET }} -type f \( -name '*.xml' -o -name '*.csv' -o -name '*.yml' \) -exec chmod 644 {} \; 2>/dev/null || true
+            #find ${{ env.ADDONS_TARGET }} -type f \( -name '*.xml' -o -name '*.csv' -o -name '*.yml' \) -exec chmod 644 {} \; 2>/dev/null || true
             
             echo "🔐 Permisos ajustados correctamente" >> ${{ env.LOG_FILE }}
           fi
