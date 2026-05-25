@@ -4,9 +4,9 @@ on:
   push:
     branches:
       - release-19.0
-    paths:
-      - '.gitmodules'
-      - 'addons/**'  # detecta cambios en referencias de submódulos
+    # paths:
+    #   - '.gitmodules'
+    #   - 'addons/**'  # detecta cambios en referencias de submódulos
   pull_request:
     branches:
       - release-19.0
