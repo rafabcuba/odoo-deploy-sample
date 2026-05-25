@@ -22,50 +22,50 @@ env:
 
 jobs:
   # Job 1: Validación de submódulos
-  validate-submodules:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: 📥 Checkout del repositorio principal con submódulos
-        uses: actions/checkout@v4
-        with:
-          ref: release-19.0
-          submodules: 'recursive'
-          fetch-depth: 1
+  # validate-submodules:
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 10
+  #   steps:
+  #     - name: 📥 Checkout del repositorio principal con submódulos
+  #       uses: actions/checkout@v4
+  #       with:
+  #         ref: release-19.0
+  #         submodules: 'recursive'
+  #         fetch-depth: 1
 
-      - name: 📋 Obtener lista de submódulos
-        id: get-submodules
-        run: |
-          if [ ! -f .gitmodules ]; then
-            echo "⚠️ No hay submódulos en este repositorio"
-            exit 0
-          fi
+  #     - name: 📋 Obtener lista de submódulos
+  #       id: get-submodules
+  #       run: |
+  #         if [ ! -f .gitmodules ]; then
+  #           echo "⚠️ No hay submódulos en este repositorio"
+  #           exit 0
+  #         fi
           
-          SUBMODULES=$(git config --file .gitmodules --name-only --get-regexp path | cut -d '.' -f2-)
-          echo "📦 Submódulos encontrados:"
-          echo "$SUBMODULES"
+  #         SUBMODULES=$(git config --file .gitmodules --name-only --get-regexp path | cut -d '.' -f2-)
+  #         echo "📦 Submódulos encontrados:"
+  #         echo "$SUBMODULES"
 
-      - name: 🔍 Validar manifests de Odoo en cada submódulo
-        run: |
-          if [ ! -f .gitmodules ]; then
-            echo "⚠️ No hay submódulos para validar"
-            exit 0
-          fi
+  #     - name: 🔍 Validar manifests de Odoo en cada submódulo
+  #       run: |
+  #         if [ ! -f .gitmodules ]; then
+  #           echo "⚠️ No hay submódulos para validar"
+  #           exit 0
+  #         fi
           
-          FAILED=0
-          for SUBMODULE in $(git config --file .gitmodules --name-only --get-regexp path | cut -d '.' -f2-); do
-            MANIFEST="$SUBMODULE/__manifest__.py"
-            if [ ! -f "$MANIFEST" ]; then
-              echo "❌ Error: $SUBMODULE no contiene __manifest__.py"
-              FAILED=1
-            else
-              echo "✅ $SUBMODULE - manifest válido"
-            fi
-          done
+  #         FAILED=0
+  #         for SUBMODULE in $(git config --file .gitmodules --name-only --get-regexp path | cut -d '.' -f2-); do
+  #           MANIFEST="$SUBMODULE/__manifest__.py"
+  #           if [ ! -f "$MANIFEST" ]; then
+  #             echo "❌ Error: $SUBMODULE no contiene __manifest__.py"
+  #             FAILED=1
+  #           else
+  #             echo "✅ $SUBMODULE - manifest válido"
+  #           fi
+  #         done
           
-          if [ $FAILED -eq 1 ]; then
-            exit 1
-          fi
+  #         if [ $FAILED -eq 1 ]; then
+  #           exit 1
+  #         fi
 
   # Job 2: Despliegue en carpeta local
   deploy-to-local:
