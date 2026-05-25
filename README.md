@@ -1,2 +1,2 @@
 # odoo-deploy-sample
-okok
+Ejemplo para probar el deploy odoo
