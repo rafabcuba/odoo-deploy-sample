@@ -9,7 +9,7 @@ on:
       - 'addons/**'  # detecta cambios en referencias de submódulos
   pull_request:
     branches:
-      - release
+      - release-19.0
     types: [closed]
   # Disparo manual desde GitHub UI
   workflow_dispatch:
@@ -42,7 +42,7 @@ jobs:
       - name: 📥 Checkout del repositorio principal con submódulos
         uses: actions/checkout@v4
         with:
-          ref: release
+          ref: release-19.0
           submodules: 'recursive'  # clave: trae todos los submódulos
           fetch-depth: 1
 
@@ -106,7 +106,7 @@ jobs:
         run: |
           cd ${{ env.TEMP_CLONE_DIR }}
           git clone --recurse-submodules \
-            --branch release \
+            --branch release-19.0 \
             --depth 1 \
             https://github.com/${{ github.repository }}.git .
           
